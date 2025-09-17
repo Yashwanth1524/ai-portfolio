@@ -8,12 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 import requests
 from datetime import datetime
 import pytz
-from transformers import pipeline
-import torch
+# REMOVE: The imports below are for the AI pipelines
+# from transformers import pipeline
+# import torch
 from pydantic import BaseModel
 from typing import Union
 import csv
-# NEW: Import FileResponse for SPA routing
 from starlette.responses import FileResponse
 
 # Initialize FastAPI app
@@ -28,14 +28,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize AI pipelines (assuming they are loaded successfully)
-try:
-    sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-    text_generator = pipeline("text-generation", model="gpt2", device=0 if torch.cuda.is_available() else -1)
-except Exception as e:
-    print(f"Error loading models: {e}")
-    sentiment_analyzer = None
-    text_generator = None
+# REMOVE: This entire block
+# try:
+#     sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+#     text_generator = pipeline("text-generation", model="gpt2", device=0 if torch.cuda.is_available() else -1)
+# except Exception as e:
+#     print(f"Error loading models: {e}")
+#     sentiment_analyzer = None
+#     text_generator = None
 
 # Define paths for denoising images and mount static files
 os.makedirs("static/cleaned_images", exist_ok=True)
