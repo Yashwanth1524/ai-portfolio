@@ -7,8 +7,13 @@ Pillow
 pytz
 opencv-python
 numpy
-transformers
-torch
-scipy
 pydantic
-aiofiles
+starlette
+typing-extensions
+anyio
+sniffio
+click
+h11
+charset-normalizer
+urllib3
+certifi
