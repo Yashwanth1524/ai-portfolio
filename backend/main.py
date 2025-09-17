@@ -33,8 +33,12 @@ app.add_middleware(
 os.makedirs("static/cleaned_images", exist_ok=True)
 os.makedirs("static/uploaded_images", exist_ok=True)
 
-# CORRECTED: This mount point will now serve all static assets from the React build
+# CORRECTED: This mount point now serves all static assets from the React build
 app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
+
+# New mount for public assets like images, favicon, and PDFs
+app.mount("/", StaticFiles(directory="frontend/build"), name="frontend-public")
+
 
 # Denoising function
 def denoise_image(image):
@@ -458,11 +462,6 @@ def get_featured_project(context: str) -> dict:
     }
     project_index = project_map.get(context, 0)
     return projects_data[project_index]
-
-# This is a mount point for a static directory called `frontend`.
-# However, you have an explicit `frontend/build` folder, so this may not be correct.
-# app.mount("/", StaticFiles(directory="frontend/build", html=True), name="frontend")
-# Instead, we will add an explicit route to handle the root path.
 
 # All API endpoints must be defined before this final catch-all route.
 
