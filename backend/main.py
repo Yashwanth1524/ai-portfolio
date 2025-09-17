@@ -2,7 +2,7 @@ import os
 import cv2
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import requests
@@ -11,7 +11,7 @@ import pytz
 from pydantic import BaseModel
 from typing import Union
 import csv
-from starlette.responses import FileResponse
+import aiofiles
 
 # Initialize FastAPI app
 app = FastAPI(title="Living Portfolio API", version="1.0")
@@ -25,13 +25,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# NOTE: AI pipeline imports and initialization have been removed to save memory.
-# The endpoints that used them have been updated to return static responses.
-
 # Define paths for denoising images and mount static files
 os.makedirs("static/cleaned_images", exist_ok=True)
 os.makedirs("static/uploaded_images", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# New: Mount the React build directory
+app.mount("/assets", StaticFiles(directory="build/assets"), name="assets")
 
 # Denoising function
 def denoise_image(image):
@@ -148,8 +148,8 @@ async def upload_and_denoise(file: UploadFile = File(...)):
     
     # Save original image
     uploaded_image_path = os.path.join("static/uploaded_images", filename)
-    with open(uploaded_image_path, "wb") as f:
-        f.write(file_content)
+    async with aiofiles.open(uploaded_image_path, "wb") as f:
+        await f.write(file_content)
 
     # Process the image
     image = cv2.imdecode(np.frombuffer(file_content, np.uint8), cv2.IMREAD_GRAYSCALE)
@@ -454,6 +454,15 @@ def get_featured_project(context: str) -> dict:
     }
     project_index = project_map.get(context, 0)
     return projects_data[project_index]
+
+# New: Catch-all route for the React app
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    # Check if a specific file is being requested
+    if os.path.exists(f"build/{full_path}"):
+        return FileResponse(f"build/{full_path}")
+    # Otherwise, serve the index.html for all other routes
+    return FileResponse("build/index.html")
 
 if __name__ == "__main__":
     import uvicorn
