@@ -8,9 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import requests
 from datetime import datetime
 import pytz
-# REMOVE: The imports below are for the AI pipelines
-# from transformers import pipeline
-# import torch
 from pydantic import BaseModel
 from typing import Union
 import csv
@@ -28,14 +25,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# REMOVE: This entire block
-# try:
-#     sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-#     text_generator = pipeline("text-generation", model="gpt2", device=0 if torch.cuda.is_available() else -1)
-# except Exception as e:
-#     print(f"Error loading models: {e}")
-#     sentiment_analyzer = None
-#     text_generator = None
+# NOTE: AI pipeline imports and initialization have been removed to save memory.
+# The endpoints that used them have been updated to return static responses.
 
 # Define paths for denoising images and mount static files
 os.makedirs("static/cleaned_images", exist_ok=True)
@@ -118,7 +109,7 @@ denoise_html_content = """
                 transition: all 0.3s ease;
                 display: inline-block;
             }
-            label.upload-btn:hover, .sample-btn:hover { box-shadow: 0 5px 15px rgba(99, 102, 241, 0.4); transform: translateY(-2px); }
+            label.upload-btn:hover, .sample-btn:hover { box-shadow: 5px 5px 15px rgba(99, 102, 241, 0.4); transform: translateY(-2px); }
             .upload-or { color: #94a3b8; margin: 1rem 0; font-size: 1rem; }
         </style>
     </head>
@@ -346,7 +337,8 @@ async def get_context(location: LocationData):
             context = "sunny-day"
 
         # Get AI-generated message
-        ai_message = generate_ai_message(context, temperature)
+        # REMOVED: generate_ai_message(context, temperature)
+        ai_message = "Weather: {temperature}°C. Context: {context}."
 
         return {
             "context": context,
@@ -409,30 +401,17 @@ async def send_email(contact_form: ContactForm):
         # Return a 500 status code to the frontend to signal failure
         raise HTTPException(status_code=500, detail=f"Error saving message: {str(e)}")
 
+# NOTE: Endpoints that relied on AI models have been updated to return static responses.
 @app.post("/analyze-sentiment/")
 async def analyze_sentiment(text: str):
-    if not sentiment_analyzer:
-        return {"sentiment": "neutral", "confidence": 0.0}
-    
-    try:
-        result = sentiment_analyzer(text[:512])[0]  # Limit input length
-        return {
-            "sentiment": result['label'].lower(),
-            "confidence": float(result['score'])
-        }
-    except Exception as e:
-        return {"sentiment": "neutral", "confidence": 0.0}
+    # This function previously used a sentiment analysis pipeline.
+    # It now returns a static, neutral response to save memory.
+    return {"sentiment": "neutral", "confidence": 0.0}
 
 def generate_ai_message(context: str, temperature: float) -> str:
-    if not text_generator:
-        return f"Welcome! It's a {context} day. Perfect for exploring AI projects!"
-    
-    try:
-        prompt = f"Create a creative welcome message for an AI engineer's portfolio website on a {context} day with temperature {temperature}°C:"
-        result = text_generator(prompt, max_length=50, num_return_sequences=1, temperature=0.8)
-        return result[0]['generated_text'].replace(prompt, "").strip()
-    except Exception as e:
-        return f"Exploring AI possibilities on this {context} day. Temperature: {temperature}°C"
+    # This function previously used a text generation pipeline.
+    # It now returns a static string to save memory.
+    return f"Welcome! It's a {context} day. Perfect for exploring AI projects!"
 
 def get_theme(context: str) -> dict:
     themes = {
