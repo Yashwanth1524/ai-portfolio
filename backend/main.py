@@ -8,10 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import requests
 from datetime import datetime
 import pytz
+from transformers import pipeline
+import torch
 from pydantic import BaseModel
 from typing import Union
 import csv
-from starlette.responses import FileResponse, PlainTextResponse
 
 # Initialize FastAPI app
 app = FastAPI(title="Living Portfolio API", version="1.0")
@@ -25,14 +26,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# NOTE: AI pipeline imports and initialization have been removed to save memory.
-# The endpoints that used them have been updated to return static responses.
+# Initialize AI pipelines (assuming they are loaded successfully)
+try:
+    sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+    text_generator = pipeline("text-generation", model="gpt2", device=0 if torch.cuda.is_available() else -1)
+except Exception as e:
+    print(f"Error loading models: {e}")
+    sentiment_analyzer = None
+    text_generator = None
 
-# Define paths for denoising images
+# Define paths for denoising images and mount static files
 os.makedirs("static/cleaned_images", exist_ok=True)
 os.makedirs("static/uploaded_images", exist_ok=True)
-
-# Mount a separate directory for the denoising demo's static files (e.g., sample images)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Denoising function
@@ -70,9 +75,9 @@ def denoise_image(image):
     enhanced_image = cv2.convertScaleAbs(sharpened_image, alpha=alpha, beta=beta)
     
     # Automatic border detection and cropping
-    gray = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(enhanced_image, cv2.COLOR_GRAY2BGR)
     _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(thresh[:, :, 0], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     # Crop based on the largest contour found
     if contours:
@@ -83,7 +88,7 @@ def denoise_image(image):
         
     return cropped_img
 
-# Endpoint for the denoising demo page itself, serving HTML
+# HTML for the UI (Denoising page)
 denoise_html_content = """
 <!DOCTYPE html>
 <html>
@@ -111,7 +116,7 @@ denoise_html_content = """
                 transition: all 0.3s ease;
                 display: inline-block;
             }
-            label.upload-btn:hover, .sample-btn:hover { box-shadow: 5px 5px 15px rgba(99, 102, 241, 0.4); transform: translateY(-2px); }
+            label.upload-btn:hover, .sample-btn:hover { box-shadow: 0 5px 15px rgba(99, 102, 241, 0.4); transform: translateY(-2px); }
             .upload-or { color: #94a3b8; margin: 1rem 0; font-size: 1rem; }
         </style>
     </head>
@@ -136,6 +141,10 @@ denoise_html_content = """
     </body>
 </html>
 """
+
+@app.get("/")
+async def root():
+    return {"message": "Living Portfolio API is running!"}
 
 @app.get("/denoise-demo/", response_class=HTMLResponse)
 async def read_denoise_root():
@@ -308,16 +317,166 @@ projects_data = [
     }
 ]
 
-# This is a mount point for a static directory called `frontend`.
-# However, you have an explicit `frontend/build` folder, so this may not be correct.
-# app.mount("/", StaticFiles(directory="frontend/build", html=True), name="frontend")
-# Instead, we will add an explicit route to handle the root path.
+@app.get("/projects")
+async def get_projects():
+    return projects_data
 
-# All API endpoints must be defined before this final catch-all route.
+@app.post("/get-context/")
+async def get_context(location: LocationData):
+    try:
+        # Get weather data
+        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={location.latitude}&longitude={location.longitude}&current_weather=true"
+        weather_response = requests.get(weather_url)
+        weather_data = weather_response.json()
+        current_weather = weather_data['current_weather']
+        
+        is_day = current_weather['is_day']
+        temperature = current_weather['temperature']
+        weather_code = current_weather['weathercode']
 
-@app.get("/")
-async def serve_index():
-    return FileResponse("frontend/build/index.html")
+        # Determine context
+        context = "default"
+        if is_day == 0:
+            context = "night"
+        elif weather_code >= 51 and weather_code < 80:
+            context = "rainy"
+        elif weather_code >= 95:
+            context = "stormy"
+        elif temperature > 30:
+            context = "hot-day"
+        else:
+            context = "sunny-day"
+
+        # Get AI-generated message
+        ai_message = generate_ai_message(context, temperature)
+
+        return {
+            "context": context,
+            "theme": get_theme(context),
+            "featured_project": get_featured_project(context),
+            "ai_message": ai_message,
+            "weather_data": {
+                "is_day": bool(is_day),
+                "temperature": temperature,
+                "weather_code": weather_code
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing context: {str(e)}")
+
+# UPDATED: Replaced email logic with file writing
+@app.post("/send-email/")
+async def send_email(contact_form: ContactForm):
+    try:
+        # Define the directory and CSV file path
+        submissions_dir = "contact_submissions"
+        
+        # Check if the directory exists and create it if not
+        if not os.path.exists(submissions_dir):
+            os.makedirs(submissions_dir)
+            print(f"Created directory: {submissions_dir}")
+
+        csv_file_path = os.path.join(submissions_dir, "contact_submissions.csv")
+
+        # Check if the file exists to decide whether to write headers
+        file_exists = os.path.exists(csv_file_path)
+
+        # Open the CSV file in append mode
+        with open(csv_file_path, "a", newline="", encoding="utf-8") as file:
+            fieldnames = ["timestamp", "name", "email", "subject", "message"]
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            
+            # Write the header only if the file is new
+            if not file_exists:
+                writer.writeheader()
+            
+            # Prepare the data row
+            data_row = {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "name": contact_form.name,
+                "email": contact_form.email,
+                "subject": contact_form.subject,
+                "message": contact_form.body
+            }
+            
+            # Write the data to the CSV file
+            writer.writerow(data_row)
+            
+        print(f"Contact form data appended to {csv_file_path}")
+        return {"message": "Message saved successfully!"}
+
+    except Exception as e:
+        print(f"Error saving contact form data: {e}")
+        # Return a 500 status code to the frontend to signal failure
+        raise HTTPException(status_code=500, detail=f"Error saving message: {str(e)}")
+
+@app.post("/analyze-sentiment/")
+async def analyze_sentiment(text: str):
+    if not sentiment_analyzer:
+        return {"sentiment": "neutral", "confidence": 0.0}
+    
+    try:
+        result = sentiment_analyzer(text[:512])[0]  # Limit input length
+        return {
+            "sentiment": result['label'].lower(),
+            "confidence": float(result['score'])
+        }
+    except Exception as e:
+        return {"sentiment": "neutral", "confidence": 0.0}
+
+def generate_ai_message(context: str, temperature: float) -> str:
+    if not text_generator:
+        return f"Welcome! It's a {context} day. Perfect for exploring AI projects!"
+    
+    try:
+        prompt = f"Create a creative welcome message for an AI engineer's portfolio website on a {context} day with temperature {temperature}°C:"
+        result = text_generator(prompt, max_length=50, num_return_sequences=1, temperature=0.8)
+        return result[0]['generated_text'].replace(prompt, "").strip()
+    except Exception as e:
+        return f"Exploring AI possibilities on this {context} day. Temperature: {temperature}°C"
+
+def get_theme(context: str) -> dict:
+    themes = {
+        "default": {
+            "--bg-color": "#1a1a2e", "--text-color": "#e6e6e6", 
+            "--accent-color": "#4cc9f0", "--card-bg": "rgba(255,255,255,0.1)"
+        },
+        "night": {
+            "--bg-color": "#0f0f1f", "--text-color": "#a0a0d0", 
+            "--accent-color": "#7b68ee", "--card-bg": "rgba(160,160,208,0.15)"
+        },
+        "rainy": {
+            "--bg-color": "#2b4162", "--text-color": "#f0f8ff", 
+            "--accent-color": "#a0d2db", "--card-bg": "rgba(176,224,230,0.2)"
+        },
+        "stormy": {
+            "--bg-color": "#0d1b2a", "--text-color": "#ff6b6b", 
+            "--accent-color": "#e63946", "--card-bg": "rgba(230,57,70,0.15)"
+        },
+        "hot-day": {
+            "--bg-color": "#ffd166", "--text-color": "#3d348b", 
+            "--accent-color": "#f18701", "--card-bg": "rgba(241,135,1,0.2)"
+        },
+        "sunny-day": {
+            "--bg-color": "#f9dbbd", "--text-color": "#6a4c93", 
+            "--accent-color": "#ffa62b", "--card-bg": "rgba(255,166,43,0.2)"
+        },
+    }
+    return themes.get(context, themes["default"])
+
+def get_featured_project(context: str) -> dict:
+    """Returns a full project object based on context."""
+    project_map = {
+        "night": 0,  # Neural Style Transfer
+        "rainy": 1,  # Predictive Maintenance
+        "stormy": 2,  # Sentiment Analysis
+        "hot-day": 0,
+        "sunny-day": 1,
+        "default": 2,
+    }
+    project_index = project_map.get(context, 0)
+    return projects_data[project_index]
 
 if __name__ == "__main__":
     import uvicorn
