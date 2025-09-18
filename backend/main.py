@@ -83,7 +83,7 @@ def denoise_image(image):
         
     return cropped_img
 
-# HTML for the UI (Denoising page)
+# Endpoint for the denoising demo page itself, serving HTML
 denoise_html_content = """
 <!DOCTYPE html>
 <html>
@@ -307,11 +307,6 @@ projects_data = [
         "github_url": "https://github.com/Yashwanth1524/socio"
     }
 ]
-
-# This is a mount point for a static directory called `frontend`.
-# However, you have an explicit `frontend/build` folder, so this may not be correct.
-# app.mount("/", StaticFiles(directory="frontend/build", html=True), name="frontend")
-# Instead, we will add an explicit route to handle the root path.
 
 # All API endpoints must be defined before this final catch-all route.
 
