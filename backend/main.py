@@ -33,8 +33,11 @@ app.add_middleware(
 os.makedirs("static/cleaned_images", exist_ok=True)
 os.makedirs("static/uploaded_images", exist_ok=True)
 
-# Mount for static files for the denoising demo
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# CORRECTED: This mount point now serves all static assets from the React build
+app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
+
+# New mount for public assets like images, favicon, and PDFs
+app.mount("/", StaticFiles(directory="frontend/build"), name="frontend-public")
 
 
 # Denoising function
@@ -72,9 +75,9 @@ def denoise_image(image):
     enhanced_image = cv2.convertScaleAbs(sharpened_image, alpha=alpha, beta=beta)
     
     # Automatic border detection and cropping
-    gray = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(enhanced_image, cv2.COLOR_GRAY2BGR)
     _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(thresh[:, :, 0], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     # Crop based on the largest contour found
     if contours:
@@ -459,11 +462,6 @@ def get_featured_project(context: str) -> dict:
     }
     project_index = project_map.get(context, 0)
     return projects_data[project_index]
-
-# This is a mount point for a static directory called `frontend`.
-# However, you have an explicit `frontend/build` folder, so this may not be correct.
-# app.mount("/", StaticFiles(directory="frontend/build", html=True), name="frontend")
-# Instead, we will add an explicit route to handle the root path.
 
 # All API endpoints must be defined before this final catch-all route.
 
