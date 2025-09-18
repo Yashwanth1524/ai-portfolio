@@ -28,9 +28,61 @@ app.add_middleware(
 # NOTE: AI pipeline imports and initialization have been removed to save memory.
 # The endpoints that used them have been updated to return static responses.
 
-# Define paths for denoising images
+# Define paths for denoising images and mount static files
 os.makedirs("static/cleaned_images", exist_ok=True)
 os.makedirs("static/uploaded_images", exist_ok=True)
+
+# Mount a separate directory for the denoising demo's static files (e.g., sample images)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+# Denoising function
+def denoise_image(image):
+    # Perform denoising
+    denoised_image = cv2.fastNlMeansDenoising(image, None, h=20, templateWindowSize=17, searchWindowSize=28)
+    
+    # Apply adaptive thresholding
+    binary_image = cv2.adaptiveThreshold(denoised_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+    
+    # Find connected components
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_image, connectivity=8)
+    
+    # Create an output image to hold the components
+    output_image = np.zeros_like(binary_image)
+    
+    # Iterate through each component
+    for i in range(1, num_labels):
+        # Create a mask for the current component
+        component_mask = (labels == i).astype("uint8") * 255
+        # Keep components larger than a certain threshold size to preserve more details
+        if stats[i, cv2.CC_STAT_AREA] > 50:
+            output_image = cv2.bitwise_or(output_image, component_mask)
+            
+    # Invert the image back to original white objects
+    output_image = cv2.bitwise_not(output_image)
+    
+    # Sharpen the image
+    kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+    sharpened_image = cv2.filter2D(output_image, -1, kernel)
+    
+    # Adjust contrast and brightness
+    alpha = 1.5  # Contrast control
+    beta = 50    # Brightness control
+    enhanced_image = cv2.convertScaleAbs(sharpened_image, alpha=alpha, beta=beta)
+    
+    # Automatic border detection and cropping
+    gray = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Crop based on the largest contour found
+    if contours:
+        x, y, w, h = cv2.boundingRect(contours[0])
+        cropped_img = enhanced_image[y:y+h, x:x+w]
+    else:
+        cropped_img = enhanced_image  # In case no contours are found
+        
+    return cropped_img
 
 # Endpoint for the denoising demo page itself, serving HTML
 denoise_html_content = """
@@ -89,54 +141,6 @@ denoise_html_content = """
 @app.get("/denoise-demo/", response_class=HTMLResponse)
 async def read_denoise_root():
     return denoise_html_content
-
-# Denoising function
-def denoise_image(image):
-    # Perform denoising
-    denoised_image = cv2.fastNlMeansDenoising(image, None, h=20, templateWindowSize=17, searchWindowSize=28)
-    
-    # Apply adaptive thresholding
-    binary_image = cv2.adaptiveThreshold(denoised_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-    
-    # Find connected components
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_image, connectivity=8)
-    
-    # Create an output image to hold the components
-    output_image = np.zeros_like(binary_image)
-    
-    # Iterate through each component
-    for i in range(1, num_labels):
-        # Create a mask for the current component
-        component_mask = (labels == i).astype("uint8") * 255
-        # Keep components larger than a certain threshold size to preserve more details
-        if stats[i, cv2.CC_STAT_AREA] > 50:
-            output_image = cv2.bitwise_or(output_image, component_mask)
-            
-    # Invert the image back to original white objects
-    output_image = cv2.bitwise_not(output_image)
-    
-    # Sharpen the image
-    kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-    sharpened_image = cv2.filter2D(output_image, -1, kernel)
-    
-    # Adjust contrast and brightness
-    alpha = 1.5  # Contrast control
-    beta = 50    # Brightness control
-    enhanced_image = cv2.convertScaleAbs(sharpened_image, alpha=alpha, beta=beta)
-    
-    # Automatic border detection and cropping
-    gray = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Crop based on the largest contour found
-    if contours:
-        x, y, w, h = cv2.boundingRect(contours[0])
-        cropped_img = enhanced_image[y:y+h, x:x+w]
-    else:
-        cropped_img = enhanced_image  # In case no contours are found
-        
-    return cropped_img
 
 # Endpoint for handling regular file uploads
 @app.post("/upload_and_denoise/", response_class=HTMLResponse)
@@ -304,156 +308,6 @@ projects_data = [
         "github_url": "https://github.com/Yashwanth1524/socio"
     }
 ]
-
-@app.get("/projects")
-async def get_projects():
-    return projects_data
-
-@app.post("/get-context/")
-async def get_context(location: LocationData):
-    try:
-        # Get weather data
-        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={location.latitude}&longitude={location.longitude}&current_weather=true"
-        weather_response = requests.get(weather_url)
-        weather_data = weather_response.json()
-        current_weather = weather_data['current_weather']
-        
-        is_day = current_weather['is_day']
-        temperature = current_weather['temperature']
-        weather_code = current_weather['weather_code']
-
-        # Determine context
-        context = "default"
-        if is_day == 0:
-            context = "night"
-        elif weather_code >= 51 and weather_code < 80:
-            context = "rainy"
-        elif weather_code >= 95:
-            context = "stormy"
-        elif temperature > 30:
-            context = "hot-day"
-        else:
-            context = "sunny-day"
-
-        # Get AI-generated message
-        # The generate_ai_message function is not used, its logic has been replaced with a static string to save memory.
-        ai_message = f"Weather: {temperature}°C. Context: {context}."
-
-        return {
-            "context": context,
-            "theme": get_theme(context),
-            "featured_project": get_featured_project(context),
-            "ai_message": ai_message,
-            "weather_data": {
-                "is_day": bool(is_day),
-                "temperature": temperature,
-                "weather_code": weather_code
-            }
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing context: {str(e)}")
-
-# UPDATED: Replaced email logic with file writing
-@app.post("/send-email/")
-async def send_email(contact_form: ContactForm):
-    try:
-        # Define the directory and CSV file path
-        submissions_dir = "contact_submissions"
-        
-        # Check if the directory exists and create it if not
-        if not os.path.exists(submissions_dir):
-            os.makedirs(submissions_dir)
-            print(f"Created directory: {submissions_dir}")
-
-        csv_file_path = os.path.join(submissions_dir, "contact_submissions.csv")
-
-        # Check if the file exists to decide whether to write headers
-        file_exists = os.path.exists(csv_file_path)
-
-        # Open the CSV file in append mode
-        with open(csv_file_path, "a", newline="", encoding="utf-8") as file:
-            fieldnames = ["timestamp", "name", "email", "subject", "message"]
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            
-            # Write the header only if the file is new
-            if not file_exists:
-                writer.writeheader()
-            
-            # Prepare the data row
-            data_row = {
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "name": contact_form.name,
-                "email": contact_form.email,
-                "subject": contact_form.subject,
-                "message": contact_form.body
-            }
-            
-            # Write the data to the CSV file
-            writer.writerow(data_row)
-            
-        print(f"Contact form data appended to {csv_file_path}")
-        return {"message": "Message saved successfully!"}
-
-    except Exception as e:
-        print(f"Error saving contact form data: {e}")
-        # Return a 500 status code to the frontend to signal failure
-        raise HTTPException(status_code=500, detail=f"Error saving message: {str(e)}")
-
-# NOTE: Endpoints that relied on AI models have been updated to return static responses.
-@app.post("/analyze-sentiment/")
-async def analyze_sentiment(text: str):
-    # This function previously used a sentiment analysis pipeline.
-    # It now returns a static, neutral response to save memory.
-    return {"sentiment": "neutral", "confidence": 0.0}
-
-# NOTE: This function's logic has been replaced with a static string to save memory.
-def generate_ai_message(context: str, temperature: float) -> str:
-    # This function previously used a text generation pipeline.
-    # It now returns a static string to save memory.
-    return f"Welcome! It's a {context} day. Perfect for exploring AI projects!"
-
-def get_theme(context: str) -> dict:
-    themes = {
-        "default": {
-            "--bg-color": "#1a1a2e", "--text-color": "#e6e6e6", 
-            "--accent-color": "#4cc9f0", "--card-bg": "rgba(255,255,255,0.1)"
-        },
-        "night": {
-            "--bg-color": "#0f0f1f", "--text-color": "#a0a0d0", 
-            "--accent-color": "#7b68ee", "--card-bg": "rgba(160,160,208,0.15)"
-        },
-        "rainy": {
-            "--bg-color": "#2b4162", "--text-color": "#f0f8ff", 
-            "--accent-color": "#a0d2db", "--card-bg": "rgba(176,224,230,0.2)"
-        },
-        "stormy": {
-            "--bg-color": "#0d1b2a", "--text-color": "#ff6b6b", 
-            "--accent-color": "#e63946", "--card-bg": "rgba(230,57,70,0.15)"
-        },
-        "hot-day": {
-            "--bg-color": "#ffd166", "--text-color": "#3d348b", 
-            "--accent-color": "#f18701", "--card-bg": "rgba(241,135,1,0.2)"
-        },
-        "sunny-day": {
-            "--bg-color": "#f9dbbd", "--text-color": "#6a4c93", 
-            "--accent-color": "#ffa62b", "--card-bg": "rgba(255,166,43,0.2)"
-        },
-    }
-    return themes.get(context, themes["default"])
-
-def get_featured_project(context: str) -> dict:
-    """Returns a full project object based on context."""
-    project_map = {
-        "night": 0,  # Neural Style Transfer
-        "rainy": 1,  # Predictive Maintenance
-        "stormy": 2,  # Sentiment Analysis
-        "hot-day": 0,
-        "sunny-day": 1,
-        "default": 2,
-    }
-    project_index = project_map.get(context, 0)
-    return projects_data[project_index]
 
 # This is a mount point for a static directory called `frontend`.
 # However, you have an explicit `frontend/build` folder, so this may not be correct.
