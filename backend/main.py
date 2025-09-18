@@ -28,13 +28,12 @@ app.add_middleware(
 # NOTE: AI pipeline imports and initialization have been removed to save memory.
 # The endpoints that used them have been updated to return static responses.
 
-# Define paths for denoising images and mount static files
+# Define paths for denoising images
 os.makedirs("static/cleaned_images", exist_ok=True)
 os.makedirs("static/uploaded_images", exist_ok=True)
 
 # Mount a separate directory for the denoising demo's static files (e.g., sample images)
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
 
 # Denoising function
 def denoise_image(image):
