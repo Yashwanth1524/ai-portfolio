@@ -11,8 +11,7 @@ import pytz
 from pydantic import BaseModel
 from typing import Union
 import csv
-from starlette.responses import FileResponse
-from starlette.routing import Mount
+from starlette.responses import FileResponse, PlainTextResponse
 
 # Initialize FastAPI app
 app = FastAPI(title="Living Portfolio API", version="1.0")
@@ -29,62 +28,11 @@ app.add_middleware(
 # NOTE: AI pipeline imports and initialization have been removed to save memory.
 # The endpoints that used them have been updated to return static responses.
 
-# Define paths for denoising images and mount static files
+# Define paths for denoising images
 os.makedirs("static/cleaned_images", exist_ok=True)
 os.makedirs("static/uploaded_images", exist_ok=True)
 
-# Mount a separate directory for the denoising demo's static files (e.g., sample images)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Denoising function
-def denoise_image(image):
-    # Perform denoising
-    denoised_image = cv2.fastNlMeansDenoising(image, None, h=20, templateWindowSize=17, searchWindowSize=28)
-    
-    # Apply adaptive thresholding
-    binary_image = cv2.adaptiveThreshold(denoised_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-    
-    # Find connected components
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_image, connectivity=8)
-    
-    # Create an output image to hold the components
-    output_image = np.zeros_like(binary_image)
-    
-    # Iterate through each component
-    for i in range(1, num_labels):
-        # Create a mask for the current component
-        component_mask = (labels == i).astype("uint8") * 255
-        # Keep components larger than a certain threshold size to preserve more details
-        if stats[i, cv2.CC_STAT_AREA] > 50:
-            output_image = cv2.bitwise_or(output_image, component_mask)
-            
-    # Invert the image back to original white objects
-    output_image = cv2.bitwise_not(output_image)
-    
-    # Sharpen the image
-    kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-    sharpened_image = cv2.filter2D(output_image, -1, kernel)
-    
-    # Adjust contrast and brightness
-    alpha = 1.5  # Contrast control
-    beta = 50    # Brightness control
-    enhanced_image = cv2.convertScaleAbs(sharpened_image, alpha=alpha, beta=beta)
-    
-    # Automatic border detection and cropping
-    gray = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Crop based on the largest contour found
-    if contours:
-        x, y, w, h = cv2.boundingRect(contours[0])
-        cropped_img = enhanced_image[y:y+h, x:x+w]
-    else:
-        cropped_img = enhanced_image  # In case no contours are found
-        
-    return cropped_img
-
-# HTML for the UI (Denoising page)
+# Endpoint for the denoising demo page itself, serving HTML
 denoise_html_content = """
 <!DOCTYPE html>
 <html>
@@ -141,6 +89,54 @@ denoise_html_content = """
 @app.get("/denoise-demo/", response_class=HTMLResponse)
 async def read_denoise_root():
     return denoise_html_content
+
+# Denoising function
+def denoise_image(image):
+    # Perform denoising
+    denoised_image = cv2.fastNlMeansDenoising(image, None, h=20, templateWindowSize=17, searchWindowSize=28)
+    
+    # Apply adaptive thresholding
+    binary_image = cv2.adaptiveThreshold(denoised_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+    
+    # Find connected components
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_image, connectivity=8)
+    
+    # Create an output image to hold the components
+    output_image = np.zeros_like(binary_image)
+    
+    # Iterate through each component
+    for i in range(1, num_labels):
+        # Create a mask for the current component
+        component_mask = (labels == i).astype("uint8") * 255
+        # Keep components larger than a certain threshold size to preserve more details
+        if stats[i, cv2.CC_STAT_AREA] > 50:
+            output_image = cv2.bitwise_or(output_image, component_mask)
+            
+    # Invert the image back to original white objects
+    output_image = cv2.bitwise_not(output_image)
+    
+    # Sharpen the image
+    kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+    sharpened_image = cv2.filter2D(output_image, -1, kernel)
+    
+    # Adjust contrast and brightness
+    alpha = 1.5  # Contrast control
+    beta = 50    # Brightness control
+    enhanced_image = cv2.convertScaleAbs(sharpened_image, alpha=alpha, beta=beta)
+    
+    # Automatic border detection and cropping
+    gray = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Crop based on the largest contour found
+    if contours:
+        x, y, w, h = cv2.boundingRect(contours[0])
+        cropped_img = enhanced_image[y:y+h, x:x+w]
+    else:
+        cropped_img = enhanced_image  # In case no contours are found
+        
+    return cropped_img
 
 # Endpoint for handling regular file uploads
 @app.post("/upload_and_denoise/", response_class=HTMLResponse)
@@ -324,7 +320,7 @@ async def get_context(location: LocationData):
         
         is_day = current_weather['is_day']
         temperature = current_weather['temperature']
-        weather_code = current_weather['weathercode']
+        weather_code = current_weather['weather_code']
 
         # Determine context
         context = "default"
@@ -458,6 +454,11 @@ def get_featured_project(context: str) -> dict:
     }
     project_index = project_map.get(context, 0)
     return projects_data[project_index]
+
+# This is a mount point for a static directory called `frontend`.
+# However, you have an explicit `frontend/build` folder, so this may not be correct.
+# app.mount("/", StaticFiles(directory="frontend/build", html=True), name="frontend")
+# Instead, we will add an explicit route to handle the root path.
 
 # All API endpoints must be defined before this final catch-all route.
 
