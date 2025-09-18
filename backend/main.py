@@ -33,12 +33,8 @@ app.add_middleware(
 os.makedirs("static/cleaned_images", exist_ok=True)
 os.makedirs("static/uploaded_images", exist_ok=True)
 
-# CORRECTED: This mount point now serves all static assets from the React build
-app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
-
-# New mount for public assets like images, favicon, and PDFs
-app.mount("/", StaticFiles(directory="frontend/build"), name="frontend-public")
-
+# Mount a separate directory for the denoising demo's static files (e.g., sample images)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Denoising function
 def denoise_image(image):
@@ -75,9 +71,9 @@ def denoise_image(image):
     enhanced_image = cv2.convertScaleAbs(sharpened_image, alpha=alpha, beta=beta)
     
     # Automatic border detection and cropping
-    gray = cv2.cvtColor(enhanced_image, cv2.COLOR_GRAY2BGR)
+    gray = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2GRAY)
     _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(thresh[:, :, 0], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     # Crop based on the largest contour found
     if contours:
